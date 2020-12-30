@@ -91,6 +91,7 @@ class ExpressionParser:
         self.check_parentheses()
         self.unit_sequence = self.grammar_unit_recognizer()
         self.block_sequence = self.block_sequence_builder(self.unit_sequence)
+        self.output = self.block_calculator(self.block_sequence)
 
     def clean_input_text(self, input_text):
         return input_text.replace(" ","")
@@ -229,16 +230,13 @@ class ExpressionParser:
 
         return block_sequence[0]
 
-
-
 def evaluate(expression: str, at: Union[float, List[float]]) -> List[float]:   
     grammar = Grammar()
     expression_parser = ExpressionParser(grammar, expression, at)
-    result = expression_parser.block_calculator(expression_parser.block_sequence)
-    return result.action
+    return expression_parser.output
 
 if __name__ == "__main__": 
     cli = CliInputTransformer()
     result = evaluate(cli.inputs.expression, cli.inputs.numbers)
-    #result =  evaluate('(sin(25%x)+4/((-3*x)-(cos(2)-4)))', [5,8])
+    #result = evaluate('(sin(25%x)+4/((-3*x)-(cos(2)-4)))', [5,8])
     print(result)
