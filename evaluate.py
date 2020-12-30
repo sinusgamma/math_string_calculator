@@ -190,18 +190,55 @@ class ExpressionParser:
         return block_sequence
 
     def block_calculator(self, block_sequence):
-        for entity in block_sequence:
-            
+        block_sequence[:] = [self.block_calculator(entity) if isinstance(entity, list) else entity for entity in block_sequence]
+
+        for i, entity in enumerate(block_sequence):
+            if isinstance(entity, list):
+                block_sequence[i] = self.block_calculator(entity)
+
+        for i, entity in enumerate(block_sequence):
+            if entity.unit_type == 'sign':
+                result = entity.action(block_sequence[i+1].action)
+                block_sequence[i] = None
+                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
+        block_sequence = list(filter(lambda x: x is not None, block_sequence))                
+
+        for i, entity in enumerate(block_sequence):
+            if entity.unit_type == 'unary':
+                result = entity.action(block_sequence[i+1].action)
+                block_sequence[i] = None
+                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
+        block_sequence = list(filter(lambda x: x is not None, block_sequence))
+
+        for i, entity in enumerate(block_sequence):
+            if entity.unit_type == 'binary':
+                result = entity.action(block_sequence[i-1].action, block_sequence[i+1].action)
+                block_sequence[i], block_sequence[i-1] = None, None
+                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
+        block_sequence = list(filter(lambda x: x is not None, block_sequence))
+
+        for i, entity in enumerate(block_sequence):
+            if entity.unit_type == 'addsub':
+                result = entity.action(block_sequence[i-1].action, block_sequence[i+1].action)
+                block_sequence[i], block_sequence[i-1] = None, None
+                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
+        block_sequence = list(filter(lambda x: x is not None, block_sequence))
+
+        if len(block_sequence) > 1:
+            raise Exception('Something wrong, final output has too many elements.')
+
+        return block_sequence[0]
 
 
 
 def evaluate(expression: str, at: Union[float, List[float]]) -> List[float]:   
     grammar = Grammar()
     expression_parser = ExpressionParser(grammar, expression, at)
-    block_sequence = expression_parser.block_sequence_builder(expression_parser.unit_sequence)
-    print(len(block_sequence[5][0]))
+    result = expression_parser.block_calculator(expression_parser.block_sequence)
+    return result.action
 
 if __name__ == "__main__": 
-    #cli = CliInputTransformer()
-    #evaluate(cli.inputs.expression, cli.inputs.numbers)
-    evaluate('sin(25%x)+4/((3*x)-(cos(2)-4))', [5,8])
+    cli = CliInputTransformer()
+    result = evaluate(cli.inputs.expression, cli.inputs.numbers)
+    #result =  evaluate('(sin(25%x)+4/((-3*x)-(cos(2)-4)))', [5,8])
+    print(result)
