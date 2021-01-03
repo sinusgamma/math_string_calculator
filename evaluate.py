@@ -1,6 +1,7 @@
 import argparse
 from typing import List, Union
 import numpy as np
+import re
 
 class CliInputTransformer:
 
@@ -19,82 +20,81 @@ class CliInputTransformer:
             inputs.numbers = [float(x) for x in inputs.numbers.replace(" ","").split(',')]
         return inputs
 
+
 class ExpressionError(Exception):
     pass
 
-class Grammar():
-    def __init__(self):
-        self.str_group = {
-            'binary' : ['*', '/', '%', '^'], # targyas ragozas :) - sorry for the hungarian comment
-            'ambiguous' : ['+', '-'], # unary as sign or binary as operator
-            'unary' : ['sin', 'cos', 'tan', 'cot', 'exp', 'log'], # alanyi ragozas :)
-            'numeric' : ['0','1','2','3','4','5','6','7','8','9'],
-            'point' : ['.'],
-            'placeholder' : ['x'], # behaves mostly like numeric, but always uses only one character
-            'left_brace' : ['('],
-            'right_brace': [')']
-        }
-        self.str_to_str_group = self.str_group_inverter()
-        self.valid_prior = {
-            'binary' : self.str_group['numeric'] + self.str_group['placeholder'] + [')'],
-            'sign' : self.str_group['binary'] + ['('],
-            'unary' : self.str_group['binary'] + self.str_group['ambiguous'] + ['('],
-            'numeric' : self.str_group['binary'] + self.str_group['ambiguous'] + ['('],
-            'left_brace' : self.str_group['binary'] + self.str_group['ambiguous'] + self.str_group['unary'] + ['('],
-            'right_brace' : self.str_group['numeric'] + self.str_group['placeholder'] + [')'],
-        }
-        self.valid_first = self.str_group['ambiguous'] + self.str_group['unary'] + self.str_group['numeric'] + self.str_group['placeholder'] + ['(']
-        self.valid_last = self.str_group['numeric'] + self.str_group['placeholder'] + [')']
-        self.action = {
-            '*' : lambda a, b : np.multiply(a,b),
-            '/' : lambda a, b : np.divide(a,b),
-            '%' : lambda a, b : np.mod(a,b),
-            '^' : lambda a, b : np.power(a,b),
-            '+' : {'binary': lambda a, b : np.add(a,b), 'sign' : lambda a : np.multiply(a,1)},
-            '-' : {'binary': lambda a, b : np.subtract(a,b), 'sign' : lambda a : np.multiply(a,-1)},
-            'sin' : lambda a : np.sin(a),
-            'cos' : lambda a : np.cos(a),
-            'tan' : lambda a : np.sin(a)/np.cos(a),
-            'cot' : lambda a : np.cos(a)/np.sin(a),
-            'exp' : lambda a : np.exp(a),
-            'log' : lambda a : np.log(a),
-        }
-        self.unit_precedence = {
-            'left_brace' : 0,
-            'right_brace' : 0,
-            'number' : 1,
-            'sign' : 2,
-            'unary' : 3,             
-            'binary' : 4,
-            'addsub' : 5,
-        }
 
-    def str_group_inverter(self):
-        unit_to_group = dict()
-        for key, values in self.str_group.items():
-            for value in values:
-                unit_to_group[value] = key
-        return unit_to_group
+class Grammar():
+    units = {
+        '*' : { 'action' : lambda left, right : np.multiply(left,right),
+                'unit_type' : 'binary'},
+        '/' : {'action' : lambda left, right : np.divide(left,right),
+                'unit_type' : 'binary'},
+        '%' : {'action' : lambda left, right : np.mod(left,right),
+                'unit_type' : 'binary'},
+        '^' : {'action' : lambda left, right : np.power(left,right),
+                'unit_type' : 'binary'},
+        '+' : {'action' : lambda left=0, right=0 : np.add(left,right),
+                'unit_type' : 'ambiguous'},
+        '-' : {'action' : lambda left=0, right=0 : np.subtract(left,right),
+                'unit_type' : 'ambiguous'},
+        'sin' : {'action' : lambda right : np.sin(right),
+                'unit_type' : 'unary'},
+        'cos' : {'action' : lambda right : np.cos(right),
+                'unit_type' : 'unary'},
+        'tan' : {'action' : lambda right : np.sin(right)/np.cos(right),
+                'unit_type' : 'unary'},
+        'cot' : {'action' : lambda right : np.cos(right)/np.sin(right),
+                'unit_type' : 'unary'},
+        'exp' : {'action' : lambda right : np.exp(right),
+                'unit_type' : 'unary'},
+        'log' : {'action' : lambda right : np.log(right),
+                'unit_type' : 'unary'},
+        'x' : {'action' : lambda a : a,
+                'unit_type' : 'placeholder'},
+        '(' : {'action' : None,
+                'unit_type' : 'left_brace'},
+        ')' : {'action' : None,
+                'unit_type' : 'right_brace'}       
+    }
+    precedence = ['brace','placeholder','sign','unary','binary','addsub'] 
+
 
 class GrammarUnit:
-    def __init__(self, str_unit, str_index, unit_type, action=None):
-        self.str_unit = str_unit
-        self.str_index = str_index
-        self.unit_type = unit_type
-        self.action = action        
+    def __init__(self, unit, start_index, prior_unit_type=None):
+        if isinstance(unit, str):
+            self.operator_setup(unit, start_index, prior_unit_type)
+        else:
+            self.number_setup(unit, start_index) 
+
+    def operator_setup(self, operator, i, prior_unit_type):
+        self.string_unit = operator 
+        self.start_index = i 
+        self.unit_type = Grammar.units[operator]['unit_type'] 
+        self.action = Grammar.units[operator]['action']
+        if (operator in ['+', '-'] and 
+            (
+                i==0 or
+                ((i>0) and (prior_unit_type in ['binary', 'left_brace'])))
+            ):
+            self.unit_type = 'sign' 
+        elif operator in ['+', '-']:
+            self.unit_type = 'addsub'
+
+    def number_setup(self, number, i):
+        self.string_unit = str(number) 
+        self.start_index = i 
+        self.unit_type = 'number' 
+        self.action = number       
+
 
 class ExpressionParser:
-    def __init__(self, grammar, expression, at):
-        self.grammar = grammar
-        self.expression = self.clean_input_text(expression)
-        self.at = at
+    def __init__(self,expression):
+        self.expression=expression
+        self.longest_first = sorted(Grammar.units.keys(), key=len, reverse=True)
         self.check_parentheses()
-        self.unit_sequence = self.grammar_unit_recognizer()
-        self.block_sequence = self.block_sequence_builder(self.unit_sequence)
-        self.output = self.block_calculator(self.block_sequence)
-
-    def clean_input_text(self, input_text):
-        return input_text.replace(" ","")
+        self.unit_sequence = self.unit_sequencer()
 
     def check_parentheses(self):
         parentheses_counter = [0,0]
@@ -104,77 +104,51 @@ class ExpressionParser:
             if parentheses_counter[0] < parentheses_counter[1]:
                 raise ExpressionError(self.expression, f"Parentheses mismatch at index {i}.")
         if parentheses_counter[0] != parentheses_counter[1]:
-                raise ExpressionError(self.expression, "Number of left and right parentheses are different. Too many left parentheses. ")          
+                raise ExpressionError(self.expression, "Number of left and right parentheses are different. Too many left parentheses. ") 
 
-    def grammar_unit_recognizer(self):
+    def operator_recognizer(self, sequence, operators):
+        result = re.search(r'^(?:{})'.format('|'.join(map(re.escape, operators))), sequence)
+        operator = result.group(0) if result else None
+        return operator
+
+    def number_recognizer(self, sequence):
+        result =  re.search(r'^(\d+(\.\d+)?)', sequence)
+        number = result.group(0) if result else None
+        return number
+
+    def unit_sequencer(self):
         unit_sequence = list()
-
-        if not self.expression.startswith(tuple(self.grammar.valid_first)):
-            raise ExpressionError(self.expression, f"Expression can not start with {self.expression[0]}.")
-        if not self.expression.endswith(tuple(self.grammar.valid_last)):
-            raise ExpressionError(self.expression, f"Expression can not end with {self.expression[len(self.expression)-1]}.")
-
         i=0
         while i < len(self.expression):
-            if self.expression[i] in self.grammar.str_group['binary']:
-                if i>0 and (self.expression[i-1] not in self.grammar.valid_prior['binary']):
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before binary).")
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, unit_type='binary', action=self.grammar.action[self.expression[i]]))
-                i+=1
-            elif self.expression[i] in self.grammar.str_group['ambiguous']:
-                if i==0 or (self.expression[i-1] in self.grammar.valid_prior['sign']):
-                    unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, unit_type='sign', action=self.grammar.action[self.expression[i]]['sign']))
-                elif self.expression[i-1] in self.grammar.valid_prior['binary']:
-                    unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, unit_type='addsub', action=self.grammar.action[self.expression[i]]['binary']))
-                else:
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before +-).")
-                i+=1
-            elif self.expression[i].isalpha() and (self.expression[i] != 'x') and (self.expression[i:i+3] in self.grammar.str_group['unary']):
-                if i>0 and (self.expression[i-1] not in self.grammar.valid_prior['unary']):
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before letter).")                
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i:i+3], str_index=i, unit_type='unary', action=self.grammar.action[self.expression[i:i+3]]))
-                i+=3
-                continue
-            elif self.expression[i] in self.grammar.str_group['numeric']:
-                if i>0 and (self.expression[i-1] not in self.grammar.valid_prior['numeric']):
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before numeric).")                
-                j=0
-                point_count=0
-                while (i+j < len(self.expression)) and (self.expression[i+j].isnumeric() or (self.expression[i+j]=='.')):
-                    if self.expression[i+j]=='.': point_count+=1
-                    if point_count > 1:
-                        raise ExpressionError(self.expression, f"Invalid '.' character at index {i}.")
-                    j+=1   
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i:i+j], str_index=i, unit_type='number', action=float(self.expression[i:i+j])))
-                i+=j
-            elif self.expression[i] in self.grammar.str_group['point']:
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, action=None))
-                raise ExpressionError(self.expression, f"Invalid '.' character at index {i}.")  
-            elif self.expression[i] in self.grammar.str_group['placeholder']:
-                if i>0 and (self.expression[i-1] not in self.grammar.valid_prior['numeric']):
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before placeholder).")                 
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, unit_type='number', action=self.at))
-                i+=1                          
-            elif self.expression[i] in self.grammar.str_group['left_brace']:
-                if (i>0 and (self.expression[i-1] not in self.grammar.valid_prior['left_brace'])) and (i>2 and (self.expression[i-3: i] not in self.grammar.valid_prior['left_brace'])):
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before left brace).")                 
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, unit_type='left_brace', action='left_brace'))
-                i+=1
-            elif self.expression[i] in self.grammar.str_group['right_brace']:
-                if i>1 and (self.expression[i-1] not in self.grammar.valid_prior['right_brace']):
-                    raise ExpressionError(self.expression, f"Invalid character at {i} (before left brace).")                 
-                unit_sequence.append(GrammarUnit(str_unit=self.expression[i], str_index=i, unit_type='right_brace', action='right_brace'))
-                i+=1    
-            else: 
-                raise ExpressionError(self.expression, f"Unknown character at index {i}.") 
+            step=1
+            found_operator = self.operator_recognizer(self.expression[i:], self.longest_first)
+            found_number = self.number_recognizer(self.expression[i:])
+            if found_operator:
+                step=len(found_operator)
+                prior_type = unit_sequence[-1].unit_type if i>0 else None
+                unit_sequence.append(GrammarUnit(found_operator, i, prior_type))
+            elif found_number:
+                step=len(found_number)
+                unit_sequence.append(GrammarUnit(float(found_number), i))
+            else:
+                raise ExpressionError(self.expression, f"Invalid character at index {i}.")
+            i+=step  
         return unit_sequence    
 
-    def block_sequence_builder(self, sequence):
-        block_sequence = list()
+
+class UnitSequenceSolver:
+    def __init__(self, unit_sequence, at):
+        self.at = at
+        self.unit_hierarchy = self.brace_hierarchy_sequencer(unit_sequence)
+        self.reduced = self.hierarchy_calculator(self.unit_hierarchy) 
+        self.solution = self.reduced.action  
+
+    def brace_hierarchy_sequencer(self, sequence):
+        unit_hierarchy = list()
         i = 0
         while i < len(sequence):
             if sequence[i].unit_type not in ['left_brace', 'right_brace']:
-                block_sequence.append(sequence[i])
+                unit_hierarchy.append(sequence[i])
                 i+=1
             elif sequence[i].unit_type == 'left_brace':
                 j = 1
@@ -183,60 +157,63 @@ class ExpressionParser:
                     if sequence[i+j].unit_type == 'left_brace': brace_count += 1
                     if sequence[i+j].unit_type == 'right_brace': brace_count -= 1
                     j+=1             
-                sub_block = self.block_sequence_builder(list(sequence[i+1:i+j-1]))
-                block_sequence.append(sub_block)
+                sub_block = self.brace_hierarchy_sequencer(list(sequence[i+1:i+j-1]))
+                unit_hierarchy.append(sub_block)
                 i+=j   
             elif sequence[i].unit_type == 'right_brace':
-                raise ExpressionError(self.expression, f"Invalid rihght brace at {sequence[i].str_index}.") 
-        return block_sequence
+                raise ExpressionError(self.expression, f"Invalid rihght brace at {sequence[i].start_index}.") 
+        return unit_hierarchy
 
-    def block_calculator(self, block_sequence):
-        block_sequence[:] = [self.block_calculator(entity) if isinstance(entity, list) else entity for entity in block_sequence]
+    def hierarchy_calculator(self, sequence):
+        sequence[:] = [self.hierarchy_calculator(entity) if isinstance(entity, list) else entity for entity in sequence]
 
-        for i, entity in enumerate(block_sequence):
-            if isinstance(entity, list):
-                block_sequence[i] = self.block_calculator(entity)
+        for entity in sequence:
+            if entity.unit_type == 'placeholder':
+                entity.action = entity.action(self.at)        
 
-        for i, entity in enumerate(block_sequence):
+        for i, entity in enumerate(sequence):
             if entity.unit_type == 'sign':
-                result = entity.action(block_sequence[i+1].action)
-                block_sequence[i] = None
-                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
-        block_sequence = list(filter(lambda x: x is not None, block_sequence))                
+                result = entity.action(left=0, right=sequence[i+1].action)
+                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
+                sequence[i] = None
+        sequence = list(filter(lambda x: x is not None, sequence))                        
 
-        for i, entity in enumerate(block_sequence):
+        for i, entity in enumerate(sequence):
             if entity.unit_type == 'unary':
-                result = entity.action(block_sequence[i+1].action)
-                block_sequence[i] = None
-                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
-        block_sequence = list(filter(lambda x: x is not None, block_sequence))
+                result = entity.action(right=sequence[i+1].action)
+                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
+                sequence[i] = None              
+        sequence = list(filter(lambda x: x is not None, sequence))
 
-        for i, entity in enumerate(block_sequence):
+        for i, entity in enumerate(sequence):
             if entity.unit_type == 'binary':
-                result = entity.action(block_sequence[i-1].action, block_sequence[i+1].action)
-                block_sequence[i], block_sequence[i-1] = None, None
-                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
-        block_sequence = list(filter(lambda x: x is not None, block_sequence))
+                result = entity.action(left=sequence[i-1].action, right=sequence[i+1].action)
+                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
+                sequence[i], sequence[i-1] = None, None            
+        sequence = list(filter(lambda x: x is not None, sequence))
 
-        for i, entity in enumerate(block_sequence):
+        for i, entity in enumerate(sequence):
             if entity.unit_type == 'addsub':
-                result = entity.action(block_sequence[i-1].action, block_sequence[i+1].action)
-                block_sequence[i], block_sequence[i-1] = None, None
-                block_sequence[i+1] = GrammarUnit(str_unit=str(result), str_index=None, unit_type='number', action=result)
-        block_sequence = list(filter(lambda x: x is not None, block_sequence))
+                result = entity.action(sequence[i-1].action, sequence[i+1].action)
+                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
+                sequence[i], sequence[i-1] = None, None               
+        sequence = list(filter(lambda x: x is not None, sequence))        
 
-        if len(block_sequence) > 1:
+        if len(sequence) > 1:
+            print('len: ', len(sequence))
             raise Exception('Something wrong, final output has too many elements.')
+        
+        return sequence[0]
 
-        return block_sequence[0]
 
 def evaluate(expression: str, at: Union[float, List[float]]) -> List[float]:   
-    grammar = Grammar()
-    expression_parser = ExpressionParser(grammar, expression, at)
-    return expression_parser.output
+    expression_parser = ExpressionParser(expression)
+    unit_sequence_solver = UnitSequenceSolver(expression_parser.unit_sequence, at)
+    return unit_sequence_solver.solution
+
 
 if __name__ == "__main__": 
-    cli = CliInputTransformer()
-    result = evaluate(cli.inputs.expression, cli.inputs.numbers)
-    #result = evaluate('(sin(25%x)+4/((-3*x)-(cos(2)-4)))', [5,8])
+    # cli = CliInputTransformer()
+    # result = evaluate(cli.inputs.expression, cli.inputs.numbers)
+    result = evaluate('(sin(25.6%x)+4/((-3.09*x)-(cos(2)-4)))', [5, 8])
     print(result)
