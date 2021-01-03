@@ -58,7 +58,13 @@ class Grammar():
         ')' : {'action' : None,
                 'unit_type' : 'right_brace'}       
     }
-    precedence = ['brace','placeholder','sign','unary','binary','addsub'] 
+    
+    operator_precedence = ['sign','unary','binary','addsub']
+
+    operator_domain = { 'sign' : 'right',
+                        'unary' : 'right',
+                        'binary' : 'leftright',
+                        'addsub' : 'leftright'}
 
 
 class GrammarUnit:
@@ -89,7 +95,7 @@ class GrammarUnit:
         self.action = number       
 
 
-class ExpressionParser:
+class ExpressionUnitizer:
     def __init__(self,expression):
         self.expression=expression
         self.longest_first = sorted(Grammar.units.keys(), key=len, reverse=True)
@@ -164,50 +170,44 @@ class UnitSequenceSolver:
                 raise ExpressionError(self.expression, f"Invalid rihght brace at {sequence[i].start_index}.") 
         return unit_hierarchy
 
+
+    def operator_collapser(self, sequence):
+        for operator_type in Grammar.operator_precedence:
+            domain_positions = Grammar.operator_domain[operator_type]
+            for i, entity in enumerate(sequence):
+                if entity.unit_type == operator_type: 
+                    try:
+                        if domain_positions == 'leftright':
+                            result = entity.action(left=sequence[i-1].action, right=sequence[i+1].action)
+                            sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
+                            sequence[i], sequence[i-1] = None, None
+                        elif domain_positions == 'right': 
+                            result = entity.action(right=sequence[i+1].action)
+                            sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
+                            sequence[i] = None 
+                    except TypeError as e:
+                        print('Error: ', e)
+                        raise ExpressionError(f'Invalid syntax at index {entity.start_index}.')     
+            sequence = list(filter(lambda x: x is not None, sequence))
+        return sequence 
+
     def hierarchy_calculator(self, sequence):
         sequence[:] = [self.hierarchy_calculator(entity) if isinstance(entity, list) else entity for entity in sequence]
 
         for entity in sequence:
             if entity.unit_type == 'placeholder':
-                entity.action = entity.action(self.at)        
+                entity.action = entity.action(self.at)
 
-        for i, entity in enumerate(sequence):
-            if entity.unit_type == 'sign':
-                result = entity.action(left=0, right=sequence[i+1].action)
-                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
-                sequence[i] = None
-        sequence = list(filter(lambda x: x is not None, sequence))                        
+        reduced_sequence = self.operator_collapser(sequence)
 
-        for i, entity in enumerate(sequence):
-            if entity.unit_type == 'unary':
-                result = entity.action(right=sequence[i+1].action)
-                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
-                sequence[i] = None              
-        sequence = list(filter(lambda x: x is not None, sequence))
-
-        for i, entity in enumerate(sequence):
-            if entity.unit_type == 'binary':
-                result = entity.action(left=sequence[i-1].action, right=sequence[i+1].action)
-                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
-                sequence[i], sequence[i-1] = None, None            
-        sequence = list(filter(lambda x: x is not None, sequence))
-
-        for i, entity in enumerate(sequence):
-            if entity.unit_type == 'addsub':
-                result = entity.action(sequence[i-1].action, sequence[i+1].action)
-                sequence[i+1] = GrammarUnit(unit=result, start_index=sequence[i].start_index)
-                sequence[i], sequence[i-1] = None, None               
-        sequence = list(filter(lambda x: x is not None, sequence))        
-
-        if len(sequence) > 1:
-            print('len: ', len(sequence))
+        if len(reduced_sequence) > 1:
             raise Exception('Something wrong, final output has too many elements.')
         
-        return sequence[0]
+        return reduced_sequence[0]
 
 
 def evaluate(expression: str, at: Union[float, List[float]]) -> List[float]:   
-    expression_parser = ExpressionParser(expression)
+    expression_parser = ExpressionUnitizer(expression)
     unit_sequence_solver = UnitSequenceSolver(expression_parser.unit_sequence, at)
     return unit_sequence_solver.solution
 
@@ -215,5 +215,5 @@ def evaluate(expression: str, at: Union[float, List[float]]) -> List[float]:
 if __name__ == "__main__": 
     # cli = CliInputTransformer()
     # result = evaluate(cli.inputs.expression, cli.inputs.numbers)
-    result = evaluate('(sin(25.6%x)+4/((-3.09*x)-(cos(2)-4)))', [5, 8])
+    result = evaluate('-1*(sin(25.6%x)+4/((-3.09*x)-(cos(2)-4)))', [5, 8])
     print(result)
